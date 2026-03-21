@@ -305,6 +305,32 @@ def main() -> None:
     def clamp01(val: float) -> float:
         return float(np.clip(val, 0.0, 1.0))
 
+    def draw_fitted_centered_text(
+        frame: np.ndarray,
+        text: str,
+        rect: tuple[int, int, int, int],
+        color: tuple[int, int, int],
+        max_scale: float = 1.0,
+        thickness: int = 2,
+    ) -> None:
+        if not text:
+            return
+        left, top, right, bottom = rect
+        font = cv2.FONT_HERSHEY_SIMPLEX
+        pad_x = 12
+        pad_y = 10
+        avail_w = max(1, right - left - (2 * pad_x))
+        avail_h = max(1, bottom - top - (2 * pad_y))
+        scale = float(max_scale)
+        min_scale = 0.35
+        text_size = cv2.getTextSize(text, font, scale, thickness)[0]
+        while scale > min_scale and (text_size[0] > avail_w or text_size[1] > avail_h):
+            scale = max(min_scale, scale - 0.05)
+            text_size = cv2.getTextSize(text, font, scale, thickness)[0]
+        text_x = left + max(0, (right - left - text_size[0]) // 2)
+        text_y = top + max(0, (bottom - top + text_size[1]) // 2)
+        cv2.putText(frame, text, (text_x, text_y), font, scale, color, thickness)
+
     def soft_edge_curve(u: float, strength: float) -> float:
         # strength in [0..1], 0 = linear, 1 = strong
         u = float(np.clip(u, 0.0, 1.0))
@@ -875,17 +901,140 @@ def main() -> None:
                         2,
                     )
         elif keyboard_active:
-            instruction = "KEYBOARD MODE"
-            size, _ = cv2.getTextSize(instruction, cv2.FONT_HERSHEY_SIMPLEX, 0.9, 2)
-            cv2.putText(
-                pointer_frame,
-                instruction,
-                ((screen_w - size[0]) // 2, 60),
-                cv2.FONT_HERSHEY_SIMPLEX,
-                0.9,
-                (255, 255, 255),
-                2,
-            )
+            pointer_frame[:] = (12, 14, 20)
+            title = "Typing mode"
+            page_keys = keyboard_pages.get(keyboard_page)
+            title_size, _ = cv2.getTextSize(title, cv2.FONT_HERSHEY_SIMPLEX, 1.0, 2)
+            title_x = max(0, (int(screen_w) - title_size[0]) // 2)
+
+            if not page_keys:
+                cv2.putText(
+                    pointer_frame,
+                    title,
+                    (title_x, 56),
+                    cv2.FONT_HERSHEY_SIMPLEX,
+                    1.0,
+                    (245, 245, 245),
+                    2,
+                )
+                fallback = "Keyboard layout unavailable."
+                fallback_size, _ = cv2.getTextSize(fallback, cv2.FONT_HERSHEY_SIMPLEX, 0.9, 2)
+                cv2.putText(
+                    pointer_frame,
+                    fallback,
+                    (max(0, (int(screen_w) - fallback_size[0]) // 2), max(90, int(screen_h) // 2)),
+                    cv2.FONT_HERSHEY_SIMPLEX,
+                    0.9,
+                    (210, 210, 210),
+                    2,
+                )
+            else:
+                keys_left = min(key["rect"][0] for key in page_keys)
+                keys_top = min(key["rect"][1] for key in page_keys)
+                keys_right = max(key["rect"][2] for key in page_keys)
+                keys_bottom = max(key["rect"][3] for key in page_keys)
+
+                panel_pad_x = max(16, int(0.02 * screen_w))
+                panel_pad_y = max(16, int(0.02 * screen_h))
+                field_gap = max(16, int(0.02 * screen_h))
+                field_h = max(56, int(0.09 * screen_h))
+                field_rect = (
+                    keys_left,
+                    max(24, keys_top - field_h - field_gap),
+                    keys_right,
+                    max(24 + field_h, keys_top - field_gap),
+                )
+                panel_rect = (
+                    max(0, keys_left - panel_pad_x),
+                    max(0, field_rect[1] - panel_pad_y - 56),
+                    min(int(screen_w) - 1, keys_right + panel_pad_x),
+                    min(int(screen_h) - 1, keys_bottom + panel_pad_y),
+                )
+
+                cv2.rectangle(
+                    pointer_frame,
+                    (panel_rect[0], panel_rect[1]),
+                    (panel_rect[2], panel_rect[3]),
+                    (24, 28, 38),
+                    -1,
+                )
+                cv2.rectangle(
+                    pointer_frame,
+                    (panel_rect[0], panel_rect[1]),
+                    (panel_rect[2], panel_rect[3]),
+                    (58, 66, 84),
+                    2,
+                )
+
+                title_y = max(40, field_rect[1] - 18)
+                cv2.putText(
+                    pointer_frame,
+                    title,
+                    (title_x, title_y),
+                    cv2.FONT_HERSHEY_SIMPLEX,
+                    1.0,
+                    (245, 245, 245),
+                    2,
+                )
+
+                cv2.rectangle(
+                    pointer_frame,
+                    (field_rect[0], field_rect[1]),
+                    (field_rect[2], field_rect[3]),
+                    (16, 18, 26),
+                    -1,
+                )
+                cv2.rectangle(
+                    pointer_frame,
+                    (field_rect[0], field_rect[1]),
+                    (field_rect[2], field_rect[3]),
+                    (160, 168, 186),
+                    2,
+                )
+
+                display_text = keyboard_text
+                field_font = cv2.FONT_HERSHEY_SIMPLEX
+                field_scale = 0.9
+                field_thickness = 2
+                text_pad_x = 18
+                text_avail_w = max(1, field_rect[2] - field_rect[0] - (2 * text_pad_x))
+                while display_text:
+                    text_w = cv2.getTextSize(display_text, field_font, field_scale, field_thickness)[0][0]
+                    if text_w <= text_avail_w:
+                        break
+                    display_text = "..." + display_text[1:]
+                if display_text:
+                    text_size, _ = cv2.getTextSize(display_text, field_font, field_scale, field_thickness)
+                    text_x = field_rect[0] + text_pad_x
+                    text_y = field_rect[1] + max(0, (field_rect[3] - field_rect[1] + text_size[1]) // 2)
+                    cv2.putText(
+                        pointer_frame,
+                        display_text,
+                        (text_x, text_y),
+                        field_font,
+                        field_scale,
+                        (245, 245, 245),
+                        field_thickness,
+                    )
+
+                for key in page_keys:
+                    left, top, right, bottom = key["rect"]
+                    if key["kind"] == "action":
+                        fill_color = (58, 68, 92)
+                        border_color = (196, 208, 224)
+                    else:
+                        fill_color = (44, 50, 66)
+                        border_color = (180, 188, 206)
+                    cv2.rectangle(pointer_frame, (left, top), (right, bottom), fill_color, -1)
+                    cv2.rectangle(pointer_frame, (left, top), (right, bottom), border_color, 2)
+                    draw_fitted_centered_text(
+                        pointer_frame,
+                        key["label"],
+                        (left, top, right, bottom),
+                        (245, 245, 245),
+                        max_scale=0.9 if key["kind"] == "char" else 0.75,
+                        thickness=2,
+                    )
         elif test_active:
             if isinstance(display_gaze, tuple):
                 px = int(np.clip(display_gaze[0], 0.0, 1.0) * (screen_w - 1))
