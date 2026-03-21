@@ -6,10 +6,19 @@ import re
 import time
 from collections import deque
 import math
+from typing import TypedDict
 import cv2
 import numpy as np
 from gaze_tracker import GazeTracker
 from demo_ui import DemoUI, local_to_desktop_px, normalized_to_local_px
+
+
+class KeyboardKey(TypedDict):
+    id: str
+    label: str
+    kind: str
+    value: str
+    rect: tuple[int, int, int, int]
 
 
 def parse_args() -> argparse.Namespace:
@@ -163,6 +172,8 @@ def main() -> None:
     keyboard_focus_start: float | None = None
     keyboard_dwell_progress = 0.0
     keyboard_armed_key: str | None = None
+    keyboard_pages: dict[str, list[KeyboardKey]] = {"letters": []}
+    keyboard_layout_size: tuple[int, int] | None = None
 
     demo_ui: DemoUI | None = None
     demo_drift_x = 0.0
@@ -207,6 +218,89 @@ def main() -> None:
     BASELINE_MAX = 0.65
 
     print("Cursor backend: ctypes")
+
+    def build_keyboard_letters_page(screen_w: int, screen_h: int) -> list[KeyboardKey]:
+        sw = int(max(1, screen_w))
+        sh = int(max(1, screen_h))
+        layout_w = max(1, int(round(sw * 0.90)))
+        layout_h = max(1, int(round(sh * 0.40)))
+        layout_x = max(0, int(round((sw - layout_w) * 0.5)))
+        layout_y = max(0, int(round(sh * 0.45)))
+        max_layout_y = max(0, sh - layout_h)
+        if layout_y > max_layout_y:
+            layout_y = max_layout_y
+
+        gap_x = max(12, int(0.012 * sw))
+        gap_y = max(12, int(0.018 * sh))
+        row_h = max(1, int((layout_h - (3 * gap_y)) / 4))
+
+        def make_key(key_id: str, label: str, kind: str, value: str, rect: tuple[int, int, int, int]) -> KeyboardKey:
+            left, top, right, bottom = rect
+            return {
+                "id": key_id,
+                "label": label,
+                "kind": kind,
+                "value": value,
+                "rect": (int(left), int(top), int(right), int(bottom)),
+            }
+
+        keys: list[KeyboardKey] = []
+        row_defs = [
+            ["Q", "W", "E", "R", "T", "Y", "U", "I", "O", "P"],
+            ["A", "S", "D", "F", "G", "H", "J", "K", "L"],
+            ["Z", "X", "C", "V", "B", "N", "M"],
+        ]
+
+        for row_index, row_labels in enumerate(row_defs):
+            count = len(row_labels)
+            row_gap_total = gap_x * max(0, count - 1)
+            key_w = max(1, int((layout_w - row_gap_total) / count))
+            row_w = key_w * count + row_gap_total
+            row_x = layout_x + max(0, int((layout_w - row_w) / 2))
+            top = layout_y + row_index * (row_h + gap_y)
+            bottom = top + row_h
+            for col_index, label in enumerate(row_labels):
+                left = row_x + col_index * (key_w + gap_x)
+                right = left + key_w
+                value = label.lower()
+                keys.append(make_key(f"key_{value}", label, "char", value, (left, top, right, bottom)))
+
+        bottom_top = layout_y + 3 * (row_h + gap_y)
+        bottom_bottom = bottom_top + row_h
+        bottom_defs = [
+            ("key_space", "Space", "action", "space", 4.0),
+            ("key_backspace", "Backspace", "action", "backspace", 2.0),
+            ("key_enter", "Enter", "action", "enter", 2.0),
+            ("key_demo", "Demo", "action", "demo", 1.5),
+        ]
+        total_weight = sum(item[4] for item in bottom_defs)
+        bottom_gap_total = gap_x * max(0, len(bottom_defs) - 1)
+        unit_w = max(1.0, float(layout_w - bottom_gap_total) / float(total_weight))
+        widths = [max(1, int(round(unit_w * item[4]))) for item in bottom_defs]
+        width_error = layout_w - (sum(widths) + bottom_gap_total)
+        widths[0] += width_error
+        bottom_row_w = sum(widths) + bottom_gap_total
+        bottom_x = layout_x + max(0, int((layout_w - bottom_row_w) / 2))
+        cursor_x = bottom_x
+        for width, (key_id, label, kind, value, _) in zip(widths, bottom_defs):
+            left = cursor_x
+            right = left + width
+            keys.append(make_key(key_id, label, kind, value, (left, bottom_top, right, bottom_bottom)))
+            cursor_x = right + gap_x
+
+        return keys
+
+    def refresh_keyboard_layout() -> None:
+        nonlocal keyboard_pages, keyboard_layout_size
+        if screen_w is None or screen_h is None:
+            return
+        layout_size = (int(screen_w), int(screen_h))
+        if keyboard_layout_size == layout_size:
+            return
+        keyboard_pages["letters"] = build_keyboard_letters_page(layout_size[0], layout_size[1])
+        keyboard_layout_size = layout_size
+
+    refresh_keyboard_layout()
 
     def clamp01(val: float) -> float:
         return float(np.clip(val, 0.0, 1.0))
@@ -436,6 +530,7 @@ def main() -> None:
         if vw is None or vh is None or vw <= 0 or vh <= 0:
             vw = screen_w
             vh = screen_h
+        refresh_keyboard_layout()
         if demo_ui is None:
             demo_ui = DemoUI(int(screen_w), int(screen_h), assist_on=assist_enabled)
         else:
