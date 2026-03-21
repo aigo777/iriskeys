@@ -216,6 +216,7 @@ def main() -> None:
     BASELINE_UPDATE_VEL = 0.015
     BASELINE_MIN = 0.10
     BASELINE_MAX = 0.65
+    KEYBOARD_DWELL_S = 0.8
 
     print("Cursor backend: ctypes")
 
@@ -330,6 +331,16 @@ def main() -> None:
         text_x = left + max(0, (right - left - text_size[0]) // 2)
         text_y = top + max(0, (bottom - top + text_size[1]) // 2)
         cv2.putText(frame, text, (text_x, text_y), font, scale, color, thickness)
+
+    def hit_test_keyboard_key(pt: tuple[int, int] | None, page_keys: list[KeyboardKey]) -> str | None:
+        if pt is None:
+            return None
+        x, y = pt
+        for key in page_keys:
+            left, top, right, bottom = key["rect"]
+            if left <= x <= right and top <= y <= bottom:
+                return key["id"]
+        return None
 
     def soft_edge_curve(u: float, strength: float) -> float:
         # strength in [0..1], 0 = linear, 1 = strong
@@ -904,10 +915,19 @@ def main() -> None:
             pointer_frame[:] = (12, 14, 20)
             title = "Typing mode"
             page_keys = keyboard_pages.get(keyboard_page)
+            keyboard_gaze_px = None
+            if isinstance(display_gaze, tuple):
+                gx = clamp01(display_gaze[0])
+                gy = clamp01(display_gaze[1])
+                keyboard_gaze_px = normalized_to_local_px((gx, gy), int(screen_w), int(screen_h))
             title_size, _ = cv2.getTextSize(title, cv2.FONT_HERSHEY_SIMPLEX, 1.0, 2)
             title_x = max(0, (int(screen_w) - title_size[0]) // 2)
 
             if not page_keys:
+                keyboard_focus_key = None
+                keyboard_focus_start = None
+                keyboard_dwell_progress = 0.0
+                keyboard_armed_key = None
                 cv2.putText(
                     pointer_frame,
                     title,
@@ -929,6 +949,18 @@ def main() -> None:
                     2,
                 )
             else:
+                focused_key_id = hit_test_keyboard_key(keyboard_gaze_px, page_keys)
+                if focused_key_id != keyboard_focus_key:
+                    keyboard_focus_key = focused_key_id
+                    keyboard_focus_start = now if focused_key_id is not None else None
+                    keyboard_dwell_progress = 0.0
+                    keyboard_armed_key = None
+                elif keyboard_focus_key is None or keyboard_focus_start is None:
+                    keyboard_dwell_progress = 0.0
+                else:
+                    elapsed = max(0.0, now - keyboard_focus_start)
+                    keyboard_dwell_progress = float(np.clip(elapsed / KEYBOARD_DWELL_S, 0.0, 1.0))
+
                 keys_left = min(key["rect"][0] for key in page_keys)
                 keys_top = min(key["rect"][1] for key in page_keys)
                 keys_right = max(key["rect"][2] for key in page_keys)
@@ -1019,19 +1051,51 @@ def main() -> None:
 
                 for key in page_keys:
                     left, top, right, bottom = key["rect"]
+                    is_focused = key["id"] == keyboard_focus_key
                     if key["kind"] == "action":
                         fill_color = (58, 68, 92)
                         border_color = (196, 208, 224)
                     else:
                         fill_color = (44, 50, 66)
                         border_color = (180, 188, 206)
+                    label_color = (245, 245, 245)
+                    border_thickness = 2
+                    if is_focused:
+                        fill_color = (88, 110, 148) if key["kind"] == "action" else (76, 96, 132)
+                        border_color = (255, 244, 160)
+                        label_color = (255, 255, 255)
+                        border_thickness = 4
                     cv2.rectangle(pointer_frame, (left, top), (right, bottom), fill_color, -1)
-                    cv2.rectangle(pointer_frame, (left, top), (right, bottom), border_color, 2)
+                    cv2.rectangle(pointer_frame, (left, top), (right, bottom), border_color, border_thickness)
+                    if is_focused:
+                        bar_pad_x = max(8, int(0.08 * max(1, right - left)))
+                        bar_h = int(np.clip(bottom - top, 6, 8))
+                        bar_left = left + bar_pad_x
+                        bar_right = right - bar_pad_x
+                        bar_bottom = bottom - 8
+                        bar_top = max(top + 8, bar_bottom - bar_h)
+                        if bar_right > bar_left and bar_bottom > bar_top:
+                            cv2.rectangle(
+                                pointer_frame,
+                                (bar_left, bar_top),
+                                (bar_right, bar_bottom),
+                                (28, 30, 36),
+                                -1,
+                            )
+                            fill_right = bar_left + int(round((bar_right - bar_left) * keyboard_dwell_progress))
+                            if fill_right > bar_left:
+                                cv2.rectangle(
+                                    pointer_frame,
+                                    (bar_left, bar_top),
+                                    (fill_right, bar_bottom),
+                                    (255, 220, 110),
+                                    -1,
+                                )
                     draw_fitted_centered_text(
                         pointer_frame,
                         key["label"],
                         (left, top, right, bottom),
-                        (245, 245, 245),
+                        label_color,
                         max_scale=0.9 if key["kind"] == "char" else 0.75,
                         thickness=2,
                     )
