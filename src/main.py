@@ -154,6 +154,10 @@ def main() -> None:
         vw = screen_w
         vh = screen_h
 
+    APP_MODE_DEMO = "demo"
+    APP_MODE_KEYBOARD = "keyboard"
+    app_mode = APP_MODE_DEMO
+
     demo_ui: DemoUI | None = None
     demo_drift_x = 0.0
     demo_drift_y = 0.0
@@ -623,7 +627,7 @@ def main() -> None:
             2,
         )
         mouse_status = f"mouse={'ON' if mouse_enabled else 'OFF'} pause={'ON' if mouse_paused else 'OFF'}"
-        backend_text = f"backend={cursor_backend} lost={lost_frames}"
+        backend_text = f"backend={cursor_backend} lost={lost_frames} mode={app_mode}"
         desktop_text = f"desktop=({vx},{vy},{vw},{vh}) target=({target_x},{target_y})"
         cv2.putText(
             debug_frame,
@@ -678,7 +682,9 @@ def main() -> None:
         cv2.imshow(debug_win, debug_frame)
 
         pointer_frame = np.zeros((screen_h, screen_w, 3), dtype=np.uint8)
-        demo_active = demo_ui is not None and tracker.has_full_calibration() and not calib_active
+        overlay_active = tracker.has_full_calibration() and not calib_active
+        demo_active = demo_ui is not None and overlay_active and app_mode == APP_MODE_DEMO
+        keyboard_active = overlay_active and app_mode == APP_MODE_KEYBOARD
         if demo_active and demo_ui is not None:
             raw_local_px = None
             raw_desktop_px = None
@@ -767,6 +773,18 @@ def main() -> None:
                         (0, 255, 0),
                         2,
                     )
+        elif keyboard_active:
+            instruction = "KEYBOARD MODE"
+            size, _ = cv2.getTextSize(instruction, cv2.FONT_HERSHEY_SIMPLEX, 0.9, 2)
+            cv2.putText(
+                pointer_frame,
+                instruction,
+                ((screen_w - size[0]) // 2, 60),
+                cv2.FONT_HERSHEY_SIMPLEX,
+                0.9,
+                (255, 255, 255),
+                2,
+            )
         elif test_active:
             if isinstance(display_gaze, tuple):
                 px = int(np.clip(display_gaze[0], 0.0, 1.0) * (screen_w - 1))
