@@ -342,6 +342,31 @@ def main() -> None:
                 return key["id"]
         return None
 
+    def reset_keyboard_focus_state() -> None:
+        nonlocal keyboard_focus_key, keyboard_focus_start, keyboard_dwell_progress, keyboard_armed_key
+        keyboard_focus_key = None
+        keyboard_focus_start = None
+        keyboard_dwell_progress = 0.0
+        keyboard_armed_key = None
+
+    def execute_keyboard_key(key: KeyboardKey) -> None:
+        nonlocal app_mode, keyboard_text
+        if key["kind"] == "char":
+            keyboard_text += key["value"]
+            return
+
+        action = key["value"]
+        if action == "space":
+            keyboard_text += " "
+        elif action == "backspace":
+            if keyboard_text:
+                keyboard_text = keyboard_text[:-1]
+        elif action == "enter":
+            keyboard_text += "\n"
+        elif action == "demo":
+            app_mode = APP_MODE_DEMO
+            reset_keyboard_focus_state()
+
     def soft_edge_curve(u: float, strength: float) -> float:
         # strength in [0..1], 0 = linear, 1 = strong
         u = float(np.clip(u, 0.0, 1.0))
@@ -924,10 +949,7 @@ def main() -> None:
             title_x = max(0, (int(screen_w) - title_size[0]) // 2)
 
             if not page_keys:
-                keyboard_focus_key = None
-                keyboard_focus_start = None
-                keyboard_dwell_progress = 0.0
-                keyboard_armed_key = None
+                reset_keyboard_focus_state()
                 cv2.putText(
                     pointer_frame,
                     title,
@@ -954,12 +976,22 @@ def main() -> None:
                     keyboard_focus_key = focused_key_id
                     keyboard_focus_start = now if focused_key_id is not None else None
                     keyboard_dwell_progress = 0.0
-                    keyboard_armed_key = None
+                    keyboard_armed_key = focused_key_id if focused_key_id is not None else None
                 elif keyboard_focus_key is None or keyboard_focus_start is None:
                     keyboard_dwell_progress = 0.0
                 else:
                     elapsed = max(0.0, now - keyboard_focus_start)
                     keyboard_dwell_progress = float(np.clip(elapsed / KEYBOARD_DWELL_S, 0.0, 1.0))
+
+                if (
+                    keyboard_focus_key is not None
+                    and keyboard_armed_key == keyboard_focus_key
+                    and keyboard_dwell_progress >= 1.0
+                ):
+                    active_key = next((key for key in page_keys if key["id"] == keyboard_focus_key), None)
+                    if active_key is not None:
+                        execute_keyboard_key(active_key)
+                    keyboard_armed_key = None
 
                 keys_left = min(key["rect"][0] for key in page_keys)
                 keys_top = min(key["rect"][1] for key in page_keys)
@@ -1370,6 +1402,7 @@ def main() -> None:
                     app_mode = APP_MODE_KEYBOARD
                 else:
                     app_mode = APP_MODE_DEMO
+                    reset_keyboard_focus_state()
                 print(f"Overlay mode: {app_mode}.")
         if key == ord("b"):
             blink_enabled = not blink_enabled
