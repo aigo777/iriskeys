@@ -223,16 +223,16 @@ def main() -> None:
     def build_keyboard_letters_page(screen_w: int, screen_h: int) -> list[KeyboardKey]:
         sw = int(max(1, screen_w))
         sh = int(max(1, screen_h))
-        layout_w = max(1, int(round(sw * 0.90)))
-        layout_h = max(1, int(round(sh * 0.40)))
+        layout_w = max(1, int(round(sw * 0.84)))
+        layout_h = max(1, int(round(sh * 0.46)))
         layout_x = max(0, int(round((sw - layout_w) * 0.5)))
         layout_y = max(0, int(round(sh * 0.45)))
         max_layout_y = max(0, sh - layout_h)
         if layout_y > max_layout_y:
             layout_y = max_layout_y
 
-        gap_x = max(12, int(0.012 * sw))
-        gap_y = max(12, int(0.018 * sh))
+        gap_x = max(16, int(0.016 * sw))
+        gap_y = max(18, int(0.024 * sh))
         row_h = max(1, int((layout_h - (3 * gap_y)) / 4))
 
         def make_key(key_id: str, label: str, kind: str, value: str, rect: tuple[int, int, int, int]) -> KeyboardKey:
