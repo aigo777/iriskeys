@@ -995,6 +995,13 @@ class GazeTracker:
                     return pred
 
         if self._calib_range is not None:
+            if self._piecewise_ok and self._map_x is not None and self._map_y is not None:
+                gx01 = self._map_piecewise(gx, self._map_x["L"], self._map_x["C"], self._map_x["R"])
+                gy01 = self._map_piecewise(gy, self._map_y["T"], self._map_y["C"], self._map_y["B"])
+                mapped = self._post_map_adjust((gx01, gy01), (gx, gy))
+                self._last_good_gaze = mapped
+                return mapped
+
             gx_min, gx_max, gy_min, gy_max = self._calib_range
             if gx_max - gx_min > 1e-6 and gy_max - gy_min > 1e-6:
                 # Linear, reversible mapping for calibration.
