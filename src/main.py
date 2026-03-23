@@ -37,7 +37,7 @@ def main() -> None:
 
     print("IrisKeys - Stage 3.0")
     print(
-        "Controls: q quit | esc cancel armed | space confirm | p pause demo | v toggle demo/keyboard | m toggle mouse | b toggle blink-click | s screenshot | k calibrate | r reset | l load calibration | t test | [/] edge_gain | 9/0 y_edge_gain | i/k y_scale | o/l y_offset | y flip | ,/. spring_k"
+        "Controls: q quit | esc cancel armed | space confirm | p pause demo | v toggle demo/keyboard | u toggle kb-os-output | m toggle mouse | b toggle blink-click | s screenshot | k calibrate | r reset | l load calibration | t test | [/] edge_gain | 9/0 y_edge_gain | i/k y_scale | o/l y_offset | y flip | ,/. spring_k"
     )
 
     tracker = GazeTracker()
@@ -946,7 +946,7 @@ def main() -> None:
             2,
         )
         mouse_status = f"mouse={'ON' if mouse_enabled else 'OFF'} pause={'ON' if mouse_paused else 'OFF'}"
-        backend_text = f"backend={cursor_backend} lost={lost_frames} mode={app_mode}"
+        backend_text = f"backend={cursor_backend} lost={lost_frames} mode={app_mode} kb_os={'ON' if keyboard_send_to_os else 'OFF'}"
         desktop_text = f"desktop=({vx},{vy},{vw},{vh}) target=({target_x},{target_y})"
         cv2.putText(
             debug_frame,
@@ -1095,6 +1095,7 @@ def main() -> None:
         elif keyboard_active:
             pointer_frame[:] = (12, 14, 20)
             title = "Typing mode"
+            os_output_text = f"OS output: {'ON' if keyboard_send_to_os else 'OFF'}"
             page_keys = keyboard_pages.get(keyboard_page)
             keyboard_gaze_px = None
             if isinstance(gaze_pointer, tuple):
@@ -1103,6 +1104,8 @@ def main() -> None:
                 keyboard_gaze_px = normalized_to_local_px((gx, gy), int(screen_w), int(screen_h))
             title_size, _ = cv2.getTextSize(title, cv2.FONT_HERSHEY_SIMPLEX, 1.0, 2)
             title_x = max(0, (int(screen_w) - title_size[0]) // 2)
+            os_output_size, _ = cv2.getTextSize(os_output_text, cv2.FONT_HERSHEY_SIMPLEX, 0.6, 2)
+            os_output_x = max(16, int(screen_w) - os_output_size[0] - 24)
 
             if not page_keys:
                 reset_keyboard_focus_state()
@@ -1113,6 +1116,15 @@ def main() -> None:
                     cv2.FONT_HERSHEY_SIMPLEX,
                     1.0,
                     (245, 245, 245),
+                    2,
+                )
+                cv2.putText(
+                    pointer_frame,
+                    os_output_text,
+                    (os_output_x, 56),
+                    cv2.FONT_HERSHEY_SIMPLEX,
+                    0.6,
+                    (110, 230, 150) if keyboard_send_to_os else (210, 210, 210),
                     2,
                 )
                 fallback = "Keyboard layout unavailable."
@@ -1216,6 +1228,15 @@ def main() -> None:
                     cv2.FONT_HERSHEY_SIMPLEX,
                     1.0,
                     (245, 245, 245),
+                    2,
+                )
+                cv2.putText(
+                    pointer_frame,
+                    os_output_text,
+                    (os_output_x, title_y),
+                    cv2.FONT_HERSHEY_SIMPLEX,
+                    0.6,
+                    (110, 230, 150) if keyboard_send_to_os else (210, 210, 210),
                     2,
                 )
 
@@ -1584,6 +1605,9 @@ def main() -> None:
                     app_mode = APP_MODE_DEMO
                     reset_keyboard_focus_state()
                 print(f"Overlay mode: {app_mode}.")
+        if key == ord("u"):
+            keyboard_send_to_os = not keyboard_send_to_os
+            print(f"Keyboard OS output {'ON' if keyboard_send_to_os else 'OFF'}.")
         if key == ord("b"):
             blink_enabled = not blink_enabled
             blink_closed = False
