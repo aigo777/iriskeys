@@ -976,7 +976,7 @@ class GazeTracker:
         if gaze_raw is None:
             return None
 
-        if self._blink_freeze and self._open_ref is not None and self._last_openness is not None:
+        if False and self._blink_freeze and self._open_ref is not None and self._last_openness is not None:
             open_now = float(self._last_openness)
             if open_now < max(self._open_min_abs, self._open_ref * self._blink_ratio):
                 if self._last_good_gaze is not None:

@@ -965,9 +965,9 @@ def main() -> None:
             title = "Typing mode"
             page_keys = keyboard_pages.get(keyboard_page)
             keyboard_gaze_px = None
-            if isinstance(display_gaze, tuple):
-                gx = clamp01(display_gaze[0])
-                gy = clamp01(display_gaze[1])
+            if isinstance(gaze_pointer, tuple):
+                gx = clamp01(gaze_pointer[0])
+                gy = clamp01(gaze_pointer[1])
                 keyboard_gaze_px = normalized_to_local_px((gx, gy), int(screen_w), int(screen_h))
             title_size, _ = cv2.getTextSize(title, cv2.FONT_HERSHEY_SIMPLEX, 1.0, 2)
             title_x = max(0, (int(screen_w) - title_size[0]) // 2)
