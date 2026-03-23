@@ -172,6 +172,7 @@ def main() -> None:
     app_mode = APP_MODE_DEMO
     keyboard_page = "letters"
     keyboard_text = ""
+    keyboard_send_to_os = False
     keyboard_focus_key: str | None = None
     keyboard_focus_start: float | None = None
     keyboard_dwell_progress = 0.0
@@ -362,10 +363,22 @@ def main() -> None:
     def execute_keyboard_key(key: KeyboardKey) -> None:
         nonlocal app_mode, keyboard_text
         if key["kind"] == "char":
+            if keyboard_send_to_os:
+                # Future OS text output path plugs in here; preview stays active for now.
+                pass
             keyboard_text += key["value"]
             return
 
         action = key["value"]
+        if action == "demo":
+            app_mode = APP_MODE_DEMO
+            reset_keyboard_focus_state()
+            return
+
+        if keyboard_send_to_os:
+            # Future OS action output path plugs in here; preview stays active for now.
+            pass
+
         if action == "space":
             keyboard_text += " "
         elif action == "backspace":
@@ -373,9 +386,6 @@ def main() -> None:
                 keyboard_text = keyboard_text[:-1]
         elif action == "enter":
             keyboard_text += "\n"
-        elif action == "demo":
-            app_mode = APP_MODE_DEMO
-            reset_keyboard_focus_state()
 
     def soft_edge_curve(u: float, strength: float) -> float:
         # strength in [0..1], 0 = linear, 1 = strong
