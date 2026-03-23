@@ -176,6 +176,8 @@ def main() -> None:
     keyboard_focus_start: float | None = None
     keyboard_dwell_progress = 0.0
     keyboard_armed_key: str | None = None
+    keyboard_candidate_key: str | None = None
+    keyboard_candidate_start: float | None = None
     keyboard_pages: dict[str, list[KeyboardKey]] = {"letters": []}
     keyboard_layout_size: tuple[int, int] | None = None
 
@@ -221,6 +223,7 @@ def main() -> None:
     BASELINE_MIN = 0.10
     BASELINE_MAX = 0.65
     KEYBOARD_DWELL_S = 0.8
+    KEYBOARD_FOCUS_SWITCH_S = 0.12
 
     print("Cursor backend: ctypes")
 
@@ -348,10 +351,13 @@ def main() -> None:
 
     def reset_keyboard_focus_state() -> None:
         nonlocal keyboard_focus_key, keyboard_focus_start, keyboard_dwell_progress, keyboard_armed_key
+        nonlocal keyboard_candidate_key, keyboard_candidate_start
         keyboard_focus_key = None
         keyboard_focus_start = None
         keyboard_dwell_progress = 0.0
         keyboard_armed_key = None
+        keyboard_candidate_key = None
+        keyboard_candidate_start = None
 
     def execute_keyboard_key(key: KeyboardKey) -> None:
         nonlocal app_mode, keyboard_text
@@ -996,12 +1002,34 @@ def main() -> None:
                 )
             else:
                 focused_key_id = hit_test_keyboard_key(keyboard_gaze_px, page_keys)
-                if focused_key_id != keyboard_focus_key:
-                    keyboard_focus_key = focused_key_id
-                    keyboard_focus_start = now if focused_key_id is not None else None
-                    keyboard_dwell_progress = 0.0
-                    keyboard_armed_key = focused_key_id if focused_key_id is not None else None
-                elif keyboard_focus_key is None or keyboard_focus_start is None:
+                if keyboard_focus_key is None:
+                    keyboard_candidate_key = None
+                    keyboard_candidate_start = None
+                    if focused_key_id is not None:
+                        keyboard_focus_key = focused_key_id
+                        keyboard_focus_start = now
+                        keyboard_dwell_progress = 0.0
+                        keyboard_armed_key = focused_key_id
+                elif focused_key_id == keyboard_focus_key:
+                    keyboard_candidate_key = None
+                    keyboard_candidate_start = None
+                elif focused_key_id is None:
+                    reset_keyboard_focus_state()
+                else:
+                    if focused_key_id != keyboard_candidate_key:
+                        keyboard_candidate_key = focused_key_id
+                        keyboard_candidate_start = now
+                    elif keyboard_candidate_start is None:
+                        keyboard_candidate_start = now
+                    elif (now - keyboard_candidate_start) >= KEYBOARD_FOCUS_SWITCH_S:
+                        keyboard_focus_key = focused_key_id
+                        keyboard_focus_start = now
+                        keyboard_dwell_progress = 0.0
+                        keyboard_armed_key = focused_key_id
+                        keyboard_candidate_key = None
+                        keyboard_candidate_start = None
+
+                if keyboard_focus_key is None or keyboard_focus_start is None:
                     keyboard_dwell_progress = 0.0
                 else:
                     elapsed = max(0.0, now - keyboard_focus_start)
