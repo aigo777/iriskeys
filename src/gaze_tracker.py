@@ -223,6 +223,11 @@ class GazeTracker:
         self._blink_ratio = 0.60
         self._open_min_abs = 0.12
         self._last_good_gaze: Optional[Gaze] = None
+        self._invalid_since: Optional[float] = None
+        self._reacquire_count = 0
+        self._reacquiring = False
+        self._recovery_hold_s = 0.18
+        self._reacquire_needed_frames = 3
 
         self._gaze_smooth: Optional[Gaze] = None
         self._calib_center: Optional[Gaze] = None
@@ -1377,6 +1382,26 @@ class GazeTracker:
         self._last_velocity = self._one_euro.last_velocity
         self._gaze_smooth = (gx, gy)
         return self._gaze_smooth
+
+    def _reset_gaze_recovery_state(self) -> None:
+        self._invalid_since = None
+        self._reacquire_count = 0
+        self._reacquiring = False
+        self._gaze_smooth = None
+        self._gaze_window.clear()
+        self._last_gaze_time = None
+        self._stable_lock = False
+        self._stable_gaze = None
+        self._last_alpha = self.ema_alpha
+        self._last_cutoff = 0.0
+        self._last_velocity = 0.0
+        self._one_euro = OneEuroFilter2D(
+            min_cutoff=self._one_euro.fx.min_cutoff,
+            beta=self._one_euro.fx.beta,
+            d_cutoff=self._one_euro.fx.d_cutoff,
+            min_cutoff_y=self._one_euro.fy.min_cutoff,
+            beta_y=self._one_euro.fy.beta,
+        )
 
     def _norm_to_px(self, pt: Point, w: int, h: int) -> Tuple[int, int]:
         return int(pt[0] * w), int(pt[1] * h)
