@@ -360,12 +360,128 @@ def main() -> None:
         keyboard_candidate_key = None
         keyboard_candidate_start = None
 
+    def send_keyboard_key_to_os(key: KeyboardKey) -> bool:
+        if user32 is None:
+            return False
+
+        try:
+            if ctypes is None:
+                raise RuntimeError("ctypes unavailable")
+
+            if wintypes is None:
+                raise RuntimeError("wintypes unavailable")
+
+            class KEYBDINPUT(ctypes.Structure):
+                _fields_ = [
+                    ("wVk", wintypes.WORD),
+                    ("wScan", wintypes.WORD),
+                    ("dwFlags", wintypes.DWORD),
+                    ("time", wintypes.DWORD),
+                    ("dwExtraInfo", wintypes.ULONG_PTR),
+                ]
+
+            class INPUT(ctypes.Structure):
+                class _INPUT_UNION(ctypes.Union):
+                    _fields_ = [("ki", KEYBDINPUT)]
+
+                _anonymous_ = ("u",)
+                _fields_ = [("type", wintypes.DWORD), ("u", _INPUT_UNION)]
+
+            INPUT_KEYBOARD = 1
+            KEYEVENTF_KEYUP = 0x0002
+            KEYEVENTF_UNICODE = 0x0004
+
+            def send_inputs(inputs: list[INPUT]) -> bool:
+                if not inputs:
+                    return False
+                input_array = (INPUT * len(inputs))(*inputs)
+                sent = user32.SendInput(len(inputs), ctypes.byref(input_array), ctypes.sizeof(INPUT))
+                if int(sent) == len(inputs):
+                    return True
+                raise RuntimeError(f"SendInput returned {sent}")
+
+            if key["kind"] == "char":
+                text = key["value"]
+                inputs: list[INPUT] = []
+                for ch in text:
+                    scan_code = ord(ch)
+                    inputs.append(
+                        INPUT(
+                            type=INPUT_KEYBOARD,
+                            ki=KEYBDINPUT(0, scan_code, KEYEVENTF_UNICODE, 0, 0),
+                        )
+                    )
+                    inputs.append(
+                        INPUT(
+                            type=INPUT_KEYBOARD,
+                            ki=KEYBDINPUT(0, scan_code, KEYEVENTF_UNICODE | KEYEVENTF_KEYUP, 0, 0),
+                        )
+                    )
+                if send_inputs(inputs):
+                    return True
+            else:
+                action = key["value"]
+                vk_code = None
+                if action == "space":
+                    vk_code = 0x20
+                elif action == "backspace":
+                    vk_code = 0x08
+                elif action == "enter":
+                    vk_code = 0x0D
+
+                if vk_code is None:
+                    return False
+
+                if send_inputs(
+                    [
+                        INPUT(type=INPUT_KEYBOARD, ki=KEYBDINPUT(vk_code, 0, 0, 0, 0)),
+                        INPUT(type=INPUT_KEYBOARD, ki=KEYBDINPUT(vk_code, 0, KEYEVENTF_KEYUP, 0, 0)),
+                    ]
+                ):
+                    return True
+        except Exception:
+            pass
+
+        try:
+            if key["kind"] == "char":
+                text = key["value"]
+                if not text:
+                    return False
+                for ch in text:
+                    vk_info = int(user32.VkKeyScanW(ord(ch)))
+                    if vk_info == -1:
+                        return False
+                    vk_code = vk_info & 0xFF
+                    shift_state = (vk_info >> 8) & 0xFF
+                    if shift_state & 1:
+                        user32.keybd_event(0x10, 0, 0, 0)
+                    user32.keybd_event(vk_code, 0, 0, 0)
+                    user32.keybd_event(vk_code, 0, 0x0002, 0)
+                    if shift_state & 1:
+                        user32.keybd_event(0x10, 0, 0x0002, 0)
+                return True
+
+            action = key["value"]
+            if action == "space":
+                vk_code = 0x20
+            elif action == "backspace":
+                vk_code = 0x08
+            elif action == "enter":
+                vk_code = 0x0D
+            else:
+                return False
+
+            user32.keybd_event(vk_code, 0, 0, 0)
+            user32.keybd_event(vk_code, 0, 0x0002, 0)
+            return True
+        except Exception:
+            return False
+
     def execute_keyboard_key(key: KeyboardKey) -> None:
         nonlocal app_mode, keyboard_text
         if key["kind"] == "char":
             if keyboard_send_to_os:
-                # Future OS text output path plugs in here; preview stays active for now.
-                pass
+                send_keyboard_key_to_os(key)
             keyboard_text += key["value"]
             return
 
@@ -376,8 +492,7 @@ def main() -> None:
             return
 
         if keyboard_send_to_os:
-            # Future OS action output path plugs in here; preview stays active for now.
-            pass
+            send_keyboard_key_to_os(key)
 
         if action == "space":
             keyboard_text += " "
