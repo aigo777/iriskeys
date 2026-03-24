@@ -479,7 +479,7 @@ def main() -> None:
             return False
 
     def execute_keyboard_key(key: KeyboardKey) -> None:
-        nonlocal app_mode, keyboard_text
+        nonlocal app_mode, keyboard_text, mouse_enabled, blink_closed, sx, sy, vx_c, vy_c
         if key["kind"] == "char":
             if keyboard_send_to_os:
                 send_keyboard_key_to_os(key)
@@ -487,7 +487,26 @@ def main() -> None:
             return
 
         action = key["value"]
-        if action in {"demo", "cursor"}:
+        if action == "demo":
+            app_mode = APP_MODE_DEMO
+            reset_keyboard_focus_state()
+            return
+        if action == "cursor":
+            if not tracker.has_full_calibration():
+                print("Mouse control requires full calibration.")
+                return
+            if calib_active:
+                print("Mouse control disabled during calibration.")
+                return
+            if not mouse_enabled:
+                mouse_enabled = True
+                blink_closed = False
+                cx, cy = get_cursor_pos()
+                sx = float(cx)
+                sy = float(cy)
+                vx_c = 0.0
+                vy_c = 0.0
+                print("Mouse control enabled.")
             app_mode = APP_MODE_DEMO
             reset_keyboard_focus_state()
             return
