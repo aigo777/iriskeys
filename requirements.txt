@@ -1,7 +1,7 @@
 # Recommended interpreter: CPython 3.12 on Windows (not MSYS2/MinGW Python).
 numpy==1.26.4
 opencv-contrib-python==4.11.0.86
-mediapipe==0.10.21
+mediapipe==0.10.9
 pywinauto==0.6.9
 comtypes==1.4.16
 pywin32==311
