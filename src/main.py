@@ -38,6 +38,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--os-click", choices=("off", "on"), default="off")
     parser.add_argument("--assist", choices=("off", "on"), default="off")
     parser.add_argument("--drift", choices=("off", "on"), default="off")
+    parser.add_argument("--ml", choices=("auto", "on", "off"), default="auto")
     parser.add_argument("--auto-calibrate", choices=("off", "on"), default="off")
     parser.add_argument("--post-calibration-mode", choices=("demo", "os", "none"), default="none")
     return parser.parse_args()
@@ -87,7 +88,8 @@ def main() -> None:
             pass
         cv2.namedWindow(debug_win, cv2.WINDOW_NORMAL)
 
-    calib_dir = os.path.join(os.getcwd(), "calibration")
+    project_root = os.path.abspath(os.path.join(os.path.dirname(__file__), ".."))
+    calib_dir = os.path.join(project_root, "calibration")
     calib_path = os.path.join(calib_dir, "calibration_data.json")
     os.makedirs(calib_dir, exist_ok=True)
 
@@ -108,6 +110,8 @@ def main() -> None:
     elif os.path.exists(ml_model_path):
         if tracker.load_ml_model(ml_model_path, user_id=user_id):
             print(f"Loaded standalone ML model from {ml_model_path}")
+    tracker.set_ml_mode(args.ml)
+    print(f"ML mode: {args.ml}")
     if output_mode == "os" and pending_mode_after_calibration is None and not tracker.has_full_calibration():
         print("OS mode requires an existing full calibration. Run demo mode first and calibrate.")
         cap.release()
@@ -427,12 +431,13 @@ def main() -> None:
         except Exception:
             pass
 
-    def write_toolbar_state(paused: bool, next_click_button: str) -> None:
+    def write_toolbar_state(paused: bool, next_click_button: str, switch_mode: str = "none") -> None:
         if output_mode != "os":
             return
         payload = {
             "paused": bool(paused),
             "next_click_button": "right" if next_click_button == "right" else "left",
+            "switch_mode": switch_mode if switch_mode in ("demo", "none") else "none",
         }
         tmp_path = toolbar_state_path + ".tmp"
         try:
@@ -442,24 +447,31 @@ def main() -> None:
         except Exception:
             pass
 
-    def read_toolbar_state() -> tuple[bool, str]:
+    def read_toolbar_state() -> tuple[bool, str, str]:
         if output_mode != "os":
-            return mouse_paused, "left"
+            return mouse_paused, "left", "none"
         try:
             with open(toolbar_state_path, "r", encoding="utf-8") as handle:
                 payload = json.load(handle)
         except Exception:
-            return mouse_paused, "left"
+            return mouse_paused, "left", "none"
         paused = bool(payload.get("paused", False))
         next_click_button = "right" if payload.get("next_click_button") == "right" else "left"
-        return paused, next_click_button
+        switch_mode = "demo" if payload.get("switch_mode") == "demo" else "none"
+        return paused, next_click_button, switch_mode
 
     def consume_toolbar_click_button() -> str:
-        paused_now, next_click_button = read_toolbar_state()
+        paused_now, next_click_button, switch_mode = read_toolbar_state()
         if next_click_button == "right":
-            write_toolbar_state(paused_now, "left")
+            write_toolbar_state(paused_now, "left", switch_mode=switch_mode)
             return "right"
         return "left"
+
+    def consume_toolbar_switch_mode() -> str:
+        paused_now, next_click_button, switch_mode = read_toolbar_state()
+        if switch_mode != "none":
+            write_toolbar_state(paused_now, next_click_button, switch_mode="none")
+        return switch_mode
 
     def stop_overlay() -> None:
         nonlocal overlay_proc
@@ -518,7 +530,7 @@ def main() -> None:
         src_path = os.path.dirname(__file__)
         current_pythonpath = env.get("PYTHONPATH", "")
         env["PYTHONPATH"] = src_path if not current_pythonpath else src_path + os.pathsep + current_pythonpath
-        write_toolbar_state(paused=False, next_click_button="left")
+        write_toolbar_state(paused=False, next_click_button="left", switch_mode="none")
         try:
             toolbar_proc = subprocess.Popen(
                 [sys.executable, toolbar_script, "--state-file", toolbar_state_path],
@@ -528,6 +540,32 @@ def main() -> None:
         except Exception as exc:
             toolbar_proc = None
             print(f"Toolbar launch failed: {exc}")
+
+    def launch_demo_handoff() -> bool:
+        env = os.environ.copy()
+        src_path = os.path.dirname(__file__)
+        current_pythonpath = env.get("PYTHONPATH", "")
+        env["PYTHONPATH"] = src_path if not current_pythonpath else src_path + os.pathsep + current_pythonpath
+        cmd = [
+            sys.executable,
+            os.path.abspath(__file__),
+            "--mode",
+            "demo",
+            "--assist",
+            "on" if assist_enabled else "off",
+            "--click",
+            "off",
+            "--os-click",
+            "off",
+            "--drift",
+            "on" if drift_enabled else "off",
+        ]
+        try:
+            subprocess.Popen(cmd, cwd=project_root, env=env)
+            return True
+        except Exception as exc:
+            print(f"Demo handoff launch failed: {exc}")
+            return False
 
     def send_left_click() -> bool:
         if user32 is None:
@@ -726,7 +764,12 @@ def main() -> None:
 
         now = time.time()
         if output_mode == "os":
-            mouse_paused, _ = read_toolbar_state()
+            mouse_paused, _, _ = read_toolbar_state()
+            requested_switch_mode = consume_toolbar_switch_mode()
+            if requested_switch_mode == "demo":
+                if launch_demo_handoff():
+                    print("Switching from OS mode to demo mode using saved calibration.")
+                    break
         if face_detected:
             last_face_time = now
             lost_frames = 0
@@ -839,14 +882,23 @@ def main() -> None:
                     calib_phase = "fit"
             elif calib_phase == "fit":
                 print(f"[ML] fitting on {len(train_X)} samples")
-                ml_ok = tracker.fit_ml_calibration(train_X, train_Y, alpha=0.5)
+                validation = tracker.validate_ml_calibration(train_X, train_Y, alpha=0.5)
+                mean_err = validation.get("mean_abs_error")
+                max_err = validation.get("max_abs_error")
+                if mean_err is not None and max_err is not None:
+                    print(
+                        "[ML] validation: "
+                        f"train={validation['train_samples']} val={validation['val_samples']} "
+                        f"mean={float(mean_err):.3f} max={float(max_err):.3f}"
+                    )
+                ml_ok = bool(validation.get("ok")) and tracker.fit_ml_calibration(train_X, train_Y, alpha=0.5)
                 if ml_ok:
                     if tracker.save_ml_model(ml_model_path, user_id=user_id):
                         print(f"[ML] model saved to {ml_model_path}")
                     else:
                         print("[ML] fit succeeded, but model file save failed.")
                 else:
-                    print("[ML] fit failed, keeping fallback calibration mapping.")
+                    print("[ML] validation failed, using fallback calibration mapping.")
 
                 if tracker.save_calibration(calib_path):
                     print(f"Calibration saved to {calib_path}")
@@ -862,9 +914,18 @@ def main() -> None:
                         tracker._calib_range[3] - tracker._calib_range[2],
                     )
                 print(f"[ML] mapper status: {'ON' if tracker.is_ml_ready() else 'OFF'}")
+                tracker.set_ml_mode(args.ml)
+                tracker.reset_runtime_state()
                 calib_active = False
                 calib_phase = "idle"
                 pursuit_target_xy = None
+                gaze_pointer = None
+                drift_x = 0.0
+                drift_y = 0.0
+                sx = None
+                sy = None
+                vx_c = 0.0
+                vy_c = 0.0
                 if pending_mode_after_calibration is not None:
                     target_mode = pending_mode_after_calibration
                     pending_mode_after_calibration = None
@@ -926,7 +987,11 @@ def main() -> None:
                 calib_status = "IN_PROGRESS FIT"
 
         result["calib_status"] = calib_status
-        result["ml_status"] = f"{'ON' if tracker.is_ml_ready() else 'OFF'} samples={len(train_X)}"
+        ml_runtime = tracker.get_ml_runtime_status()
+        result["ml_status"] = (
+            f"{'ON' if tracker.is_ml_ready() else 'OFF'} "
+            f"mode={args.ml} mapper={ml_runtime['mapper']} samples={len(train_X)}"
+        )
         result["show_pose_indices"] = show_pose_indices
         debug_frame = tracker.draw_debug(frame, result)
 
@@ -1294,6 +1359,14 @@ def main() -> None:
                     print(f"Loaded calibration from {calib_path}")
                     if not tracker.is_ml_ready() and os.path.exists(ml_model_path):
                         tracker.load_ml_model(ml_model_path, user_id=user_id)
+                    tracker.set_ml_mode(args.ml)
+                    tracker.reset_runtime_state()
+                    drift_x = 0.0
+                    drift_y = 0.0
+                    sx = None
+                    sy = None
+                    vx_c = 0.0
+                    vy_c = 0.0
                     print(f"ML mapper: {'ON' if tracker.is_ml_ready() else 'OFF'}")
                 else:
                     print("Load failed: no calibration data found.")

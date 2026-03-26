@@ -73,6 +73,7 @@ class FloatingToolbar(QWidget):
         self.dock = dock
         self.tracking_paused = False
         self.next_click_button = "left"
+        self.switch_mode = "none"
         self.voice_state = "idle"
         self.voice_status_text = "Ready"
         self.voice_prepare_deadline = 0.0
@@ -118,6 +119,7 @@ class FloatingToolbar(QWidget):
 
         self.keyboard_btn = self._make_button("Keyboard", self.open_keyboard)
         self.voice_btn = self._make_button("Voice Type", self.voice_type)
+        self.demo_btn = self._make_button("Demo Mode", self.switch_to_demo_mode)
         self.right_click_btn = self._make_button("Right Click", self.toggle_right_click)
         self.pause_btn = self._make_button("Pause", self.toggle_pause)
 
@@ -129,6 +131,7 @@ class FloatingToolbar(QWidget):
         root.addWidget(title_wrap)
         root.addWidget(self.keyboard_btn)
         root.addWidget(self.voice_btn)
+        root.addWidget(self.demo_btn)
         root.addWidget(self.right_click_btn)
         root.addWidget(self.pause_btn)
         root.addWidget(self.state_label)
@@ -202,7 +205,8 @@ class FloatingToolbar(QWidget):
         top_margin = vy + max(18, int(height_px * 0.025))
         side_margin = max(18, int(width_px * 0.018))
         if self.dock == "top":
-            width = min(max(900, int(width_px * 0.62)), max(900, width_px - side_margin * 2))
+            available_width = max(720, width_px - side_margin * 2)
+            width = min(max(1040, int(width_px * 0.72)), available_width)
             height = 168
             x = vx + max(side_margin, int((width_px - width) / 2))
             y = top_margin
@@ -220,11 +224,13 @@ class FloatingToolbar(QWidget):
             return
         self.tracking_paused = bool(payload.get("paused", False))
         self.next_click_button = "right" if payload.get("next_click_button") == "right" else "left"
+        self.switch_mode = "demo" if payload.get("switch_mode") == "demo" else "none"
 
     def _sync_state(self) -> None:
         payload = {
             "paused": bool(self.tracking_paused),
             "next_click_button": "right" if self.next_click_button == "right" else "left",
+            "switch_mode": self.switch_mode if self.switch_mode in ("demo", "none") else "none",
         }
         tmp_path = str(self.state_file) + ".tmp"
         try:
@@ -238,12 +244,16 @@ class FloatingToolbar(QWidget):
     def _refresh_labels(self) -> None:
         pause_text = "Paused" if self.tracking_paused else "Tracking Live"
         click_text = "Next click: Right" if self.next_click_button == "right" else "Next click: Left"
-        self.state_label.setText(f"{pause_text}\n{click_text}\nVoice: {self.voice_status_text}")
+        mode_text = "Mode switch: Demo pending" if self.switch_mode == "demo" else "Mode switch: None"
+        self.state_label.setText(f"{pause_text}\n{click_text}\nVoice: {self.voice_status_text}\n{mode_text}")
 
         self.right_click_btn.setProperty("state", "armed" if self.next_click_button == "right" else "")
         self.pause_btn.setProperty("state", "paused" if self.tracking_paused else "")
         self.pause_btn.setText("Resume" if self.tracking_paused else "Pause")
+        self.demo_btn.setProperty("state", "arming" if self.switch_mode == "demo" else "")
+        self.demo_btn.setText("Opening Demo..." if self.switch_mode == "demo" else "Demo Mode")
         self.voice_btn.setProperty("state", "arming" if self.voice_state == "prepare" else "")
+        self.demo_btn.setEnabled(self.switch_mode != "demo")
         self.voice_btn.setEnabled(self.voice_state != "listening")
         if self.voice_state == "idle":
             self.voice_btn.setText("Voice Type")
@@ -254,6 +264,7 @@ class FloatingToolbar(QWidget):
             self.voice_btn.setText("Listening...")
         self._polish_button(self.right_click_btn)
         self._polish_button(self.pause_btn)
+        self._polish_button(self.demo_btn)
         self._polish_button(self.voice_btn)
 
     @staticmethod
@@ -371,6 +382,13 @@ class FloatingToolbar(QWidget):
 
     def toggle_right_click(self) -> None:
         self.next_click_button = "left" if self.next_click_button == "right" else "right"
+        self._sync_state()
+
+    def switch_to_demo_mode(self) -> None:
+        if self.switch_mode == "demo":
+            return
+        self.switch_mode = "demo"
+        self.voice_prepare_timer.stop()
         self._sync_state()
 
     def toggle_pause(self) -> None:

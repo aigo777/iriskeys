@@ -26,6 +26,7 @@ try:
     from PyQt6.QtGui import QFont
     from PyQt6.QtWidgets import (
         QApplication,
+        QButtonGroup,
         QCheckBox,
         QFrame,
         QGridLayout,
@@ -33,6 +34,7 @@ try:
         QLabel,
         QMessageBox,
         QPushButton,
+        QRadioButton,
         QVBoxLayout,
         QWidget,
     )
@@ -43,6 +45,7 @@ except ImportError:
         from PyQt5.QtGui import QFont
         from PyQt5.QtWidgets import (
             QApplication,
+            QButtonGroup,
             QCheckBox,
             QFrame,
             QGridLayout,
@@ -50,6 +53,7 @@ except ImportError:
             QLabel,
             QMessageBox,
             QPushButton,
+            QRadioButton,
             QVBoxLayout,
             QWidget,
         )
@@ -166,6 +170,18 @@ class IrisKeysLauncher(QWidget):
         self.dwell_checkbox.setChecked(False)
         self.dwell_checkbox.toggled.connect(self._refresh_launch_hint)
 
+        ml_title = QLabel("ML Stability Mode")
+        ml_title.setObjectName("subSectionTitle")
+
+        self.ml_group = QButtonGroup(self)
+        self.ml_auto_radio = QRadioButton("Auto (recommended)")
+        self.ml_auto_radio.setChecked(True)
+        self.ml_off_radio = QRadioButton("Safe fallback only")
+        self.ml_on_radio = QRadioButton("Force ML")
+        for button in (self.ml_auto_radio, self.ml_off_radio, self.ml_on_radio):
+            self.ml_group.addButton(button)
+            button.toggled.connect(self._refresh_launch_hint)
+
         self.launch_hint = QLabel()
         self.launch_hint.setObjectName("launchHint")
         self.launch_hint.setWordWrap(True)
@@ -173,6 +189,11 @@ class IrisKeysLauncher(QWidget):
         settings_layout.addWidget(settings_title)
         settings_layout.addWidget(self.assist_checkbox)
         settings_layout.addWidget(self.dwell_checkbox)
+        settings_layout.addSpacing(8)
+        settings_layout.addWidget(ml_title)
+        settings_layout.addWidget(self.ml_auto_radio)
+        settings_layout.addWidget(self.ml_off_radio)
+        settings_layout.addWidget(self.ml_on_radio)
         settings_layout.addSpacing(8)
         settings_layout.addWidget(self.launch_hint)
         settings_layout.addStretch(1)
@@ -293,6 +314,12 @@ class IrisKeysLauncher(QWidget):
                 font-size: 18px;
                 font-weight: 600;
             }
+            QLabel#subSectionTitle {
+                color: #e6f0f8;
+                font-size: 15px;
+                font-weight: 600;
+                padding-top: 6px;
+            }
             QLabel#factLabel {
                 color: #c4d3e1;
                 padding-left: 2px;
@@ -346,7 +373,15 @@ class IrisKeysLauncher(QWidget):
                 spacing: 10px;
                 color: #edf4fb;
             }
+            QRadioButton {
+                spacing: 10px;
+                color: #edf4fb;
+            }
             QCheckBox::indicator {
+                width: 18px;
+                height: 18px;
+            }
+            QRadioButton::indicator {
                 width: 18px;
                 height: 18px;
             }
@@ -358,6 +393,16 @@ class IrisKeysLauncher(QWidget):
             QCheckBox::indicator:checked {
                 border: 1px solid #2b8cff;
                 border-radius: 5px;
+                background: #2b8cff;
+            }
+            QRadioButton::indicator:unchecked {
+                border: 1px solid #47637d;
+                border-radius: 9px;
+                background: #0e151d;
+            }
+            QRadioButton::indicator:checked {
+                border: 1px solid #2b8cff;
+                border-radius: 9px;
                 background: #2b8cff;
             }
             """
@@ -372,15 +417,29 @@ class IrisKeysLauncher(QWidget):
     def _refresh_launch_hint(self) -> None:
         assist_text = "ON" if self.assist_checkbox.isChecked() else "OFF"
         dwell_text = "ON" if self.dwell_checkbox.isChecked() else "OFF"
+        if self.ml_off_radio.isChecked():
+            ml_text = "Safe fallback only"
+        elif self.ml_on_radio.isChecked():
+            ml_text = "Force ML"
+        else:
+            ml_text = "Auto safety mode"
         self.launch_hint.setText(
-            f"Current launch profile: Smart Magnetism {assist_text} | Dwell Click {dwell_text}"
+            f"Current launch profile: Smart Magnetism {assist_text} | Dwell Click {dwell_text} | ML {ml_text}"
         )
+
+    def _selected_ml_mode(self) -> str:
+        if self.ml_off_radio.isChecked():
+            return "off"
+        if self.ml_on_radio.isChecked():
+            return "on"
+        return "auto"
 
     def _build_backend_args(self, mode: str, auto_calibrate: bool = False) -> list[str]:
         args = [sys.executable, str(MAIN_SCRIPT), "--mode", mode]
         args.extend(["--assist", "on" if self.assist_checkbox.isChecked() else "off"])
         args.extend(["--click", "dwell" if self.dwell_checkbox.isChecked() else "off"])
         args.extend(["--os-click", "on" if self.dwell_checkbox.isChecked() else "off"])
+        args.extend(["--ml", self._selected_ml_mode()])
         if auto_calibrate:
             args.extend(["--auto-calibrate", "on"])
         return args

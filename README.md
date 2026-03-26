@@ -56,6 +56,7 @@ pip install -r requirements.txt
 The launcher is the recommended entry point for finals.
 
 It provides:
+
 - `Launch Demo Mode`
 - `Launch OS Mode`
 - `Smart Magnetism Assist`
@@ -70,6 +71,7 @@ Both launch buttons automatically start calibration first, then continue into th
 ```
 
 Use this for:
+
 - rehearsal
 - calibration checks
 - presentation sandbox
@@ -81,6 +83,7 @@ Use this for:
 ```
 
 Use this for:
+
 - real Windows cursor control
 - overlay + toolbar
 - finals field conditions
@@ -163,26 +166,11 @@ Check required imports:
 .\venv\Scripts\python.exe -c "import cv2, mediapipe, numpy, win32api, speech_recognition, pyaudio; print('imports ok')"
 ```
 
-Run syntax check:
-
-```powershell
-.\venv\Scripts\python.exe -m py_compile src\main.py src\launcher.py src\overlay.py src\toolbar.py
-```
-
-Run tests:
-
-```powershell
-$env:PYTHONPATH='C:\Users\User\infomatrix\src'
-.\venv\Scripts\python.exe -m unittest discover -s src -p "test_*.py"
-```
-
-## Finals Checklist
+## Final Instructions
 
 1. Launch `src\launcher.py`
 2. Enable `Smart Magnetism Assist`
 3. Choose whether `Dwell Click` is needed
 4. Run calibration
-5. Test Demo Mode
-6. Test OS Mode
-7. Confirm `F12` and `ESC` kill-switches work
-8. Confirm overlay, toolbar, voice typing, and right-click toggle work
+5. Demo Mode
+6. OS Mode

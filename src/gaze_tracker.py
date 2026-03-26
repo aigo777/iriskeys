@@ -52,6 +52,12 @@ POSE_SMOOTH_D_CUTOFF = 1.0
 POSE_HOLD_MS = 150
 ML_FEATURE_ORDER = ("gx", "gy", "yaw", "pitch", "roll", "tz")
 ML_MODEL_VERSION = 1
+ML_DIVERGENCE_HARD = 0.18
+ML_DIVERGENCE_STABLE = 0.10
+ML_BAD_STREAK_LIMIT = 3
+ML_GOOD_STREAK_RECOVER = 20
+ML_PROBATION_FRAMES = 120
+ML_PROBATION_BAD_RATIO = 0.25
 
 
 class OneEuroFilter:
@@ -397,11 +403,29 @@ class GazeTracker:
     def is_ml_ready(self) -> bool:
         return bool(self._ml_ready and self._ml_calibrator is not None)
 
+    def set_ml_mode(self, mode: str) -> None:
+        self._ml_mode = mode if mode in ("auto", "on", "off") else "auto"
+        self._reset_ml_runtime_state()
+
+    def get_ml_runtime_status(self) -> Dict[str, object]:
+        return {
+            "mode": self._ml_mode,
+            "mapper": self._ml_last_mapper,
+            "divergence": self._ml_last_divergence,
+            "probation_total": self._ml_probation_total,
+            "probation_frames": ML_PROBATION_FRAMES,
+            "probation_bad": self._ml_probation_bad,
+            "probation_failed": self._ml_probation_failed,
+            "runtime_enabled": self._ml_runtime_enabled,
+            "disable_reason": self._ml_disabled_reason,
+        }
+
     def _clear_ml_calibration(self) -> None:
         self._ml_calibrator: Optional[Calibrator] = None
         self._ml_ready = False
         self._ml_feature_order = ML_FEATURE_ORDER
         self._last_head_pose_for_ml: Optional[Dict[str, float]] = None
+        self._ml_mode = "auto"
         self._ml_meta: Dict[str, object] = {
             "ready": False,
             "user_id": None,
@@ -410,6 +434,114 @@ class GazeTracker:
             "alpha": None,
             "version": ML_MODEL_VERSION,
         }
+        self._reset_ml_runtime_state()
+
+    def _reset_ml_runtime_state(self) -> None:
+        self._ml_runtime_enabled = True
+        self._ml_bad_streak = 0
+        self._ml_good_streak = 0
+        self._ml_probation_total = 0
+        self._ml_probation_bad = 0
+        self._ml_probation_failed = False
+        self._ml_last_divergence: Optional[float] = None
+        self._ml_last_mapper = "FALLBACK"
+        self._ml_disabled_reason = ""
+        self._ml_last_logged_reason = ""
+
+    def reset_runtime_state(self) -> None:
+        self._last_good_gaze = None
+        self._gaze_smooth = None
+        self._gaze_window.clear()
+        self._last_gaze_time = None
+        self._stable_lock = False
+        self._stable_gaze = None
+        self._last_velocity = 0.0
+        self._last_alpha = self.ema_alpha
+        self._last_cutoff = 0.0
+        self._one_euro = OneEuroFilter2D(
+            min_cutoff=self._one_euro.fx.min_cutoff,
+            beta=self._one_euro.fx.beta,
+            d_cutoff=self._one_euro.fx.d_cutoff,
+            min_cutoff_y=self._one_euro.fy.min_cutoff,
+            beta_y=self._one_euro.fy.beta,
+        )
+        self._reset_ml_runtime_state()
+
+    def validate_ml_calibration(
+        self,
+        X: List[List[float]],
+        Y: List[List[float]],
+        alpha: float = 0.5,
+    ) -> Dict[str, object]:
+        result: Dict[str, object] = {
+            "ok": False,
+            "train_samples": 0,
+            "val_samples": 0,
+            "mean_abs_error": None,
+            "max_abs_error": None,
+        }
+        total = min(len(X), len(Y))
+        if total < 12:
+            return result
+
+        val_count = max(2, int(round(total * 0.2)))
+        val_count = min(val_count, total - 8)
+        if val_count < 2:
+            return result
+
+        split_idx = total - val_count
+        train_x = X[:split_idx]
+        train_y = Y[:split_idx]
+        val_x = X[split_idx:total]
+        val_y = np.asarray(Y[split_idx:total], dtype=np.float64)
+        calibrator = Calibrator(feature_order=self._ml_feature_order)
+        if not calibrator.fit(train_x, train_y, alpha=alpha):
+            return result
+
+        try:
+            pred = calibrator.predict(val_x).astype(np.float64)
+        except (ValueError, TypeError):
+            return result
+        if pred.shape != val_y.shape or not np.isfinite(pred).all() or not np.isfinite(val_y).all():
+            return result
+
+        abs_err = np.abs(pred - val_y)
+        mean_abs_error = float(np.mean(abs_err))
+        max_abs_error = float(np.max(abs_err))
+        result.update(
+            {
+                "ok": mean_abs_error <= 0.10 and max_abs_error <= 0.22,
+                "train_samples": split_idx,
+                "val_samples": val_count,
+                "mean_abs_error": mean_abs_error,
+                "max_abs_error": max_abs_error,
+            }
+        )
+        return result
+
+    def _note_ml_disabled(self, reason: str) -> None:
+        self._ml_disabled_reason = reason
+        if self._ml_last_logged_reason != reason:
+            print(f"ML auto-disabled: {reason}")
+            self._ml_last_logged_reason = reason
+
+    def _compute_fallback_mapped(self, gaze_ax: Gaze) -> Gaze:
+        gx, gy = gaze_ax
+        if self._calib_range is not None:
+            gx_min, gx_max, gy_min, gy_max = self._calib_range
+            if gx_max - gx_min > 1e-6 and gy_max - gy_min > 1e-6:
+                gx01 = (gx - gx_min) / (gx_max - gx_min)
+                gy01 = (gy - gy_min) / (gy_max - gy_min)
+                return self._post_map_adjust((gx01, gy01), (gx, gy))
+
+        center = self._calib_center if self._calib_center is not None else (0.5, 0.5)
+        gx01 = 0.5 + (gx - center[0]) * self.gain_x
+        gy01 = 0.5 + (gy - center[1]) * self.gain_y
+        gx01 = self._apply_deadzone(gx01)
+        gy01 = self._apply_deadzone(gy01)
+        gx01 = self._apply_gamma(gx01)
+        gy01 = self._apply_gamma(gy01)
+        return self._post_map_adjust((self._clamp01(gx01), self._clamp01(gy01)), (gx, gy))
 
     def _build_ml_features(self, gaze_raw: Gaze, head_pose: Optional[Dict[str, float]]) -> Optional[np.ndarray]:
         if head_pose is None:
@@ -450,6 +582,7 @@ class GazeTracker:
             "alpha": float(calibrator.alpha),
             "version": int(calibrator.version),
         }
+        self._reset_ml_runtime_state()
         return True
 
     def predict_ml_gaze(self, features: np.ndarray) -> Optional[Gaze]:
@@ -506,6 +639,7 @@ class GazeTracker:
             "alpha": float(calibrator.alpha),
             "version": int(calibrator.version),
         }
+        self._reset_ml_runtime_state()
         return True
 
     def _load_ml_from_json(self, data: Dict[str, object], calib_path: str) -> None:
@@ -616,6 +750,14 @@ class GazeTracker:
             ml_text = f"ml={ml_override}"
         else:
             ml_text = f"ml={'ON' if self.is_ml_ready() else 'OFF'}"
+        ml_status = self.get_ml_runtime_status()
+        div = ml_status.get("divergence")
+        div_text = f"{float(div):.3f}" if isinstance(div, (int, float)) else "None"
+        mapper_text = (
+            f"mapper={ml_status.get('mapper')} mode={ml_status.get('mode')} "
+            f"ml_div={div_text} prob={ml_status.get('probation_total')}/{ml_status.get('probation_frames')} "
+            f"reason={ml_status.get('disable_reason') or '-'}"
+        )
         gain_text = f"gain=({self.gain_x:.2f},{self.gain_y:.2f})"
         alpha_text = f"alpha={self._last_alpha:.2f} cutoff={self._last_cutoff:.2f} vel={self._last_velocity:.3f}"
         map_x_text = "map_x=None"
@@ -647,6 +789,7 @@ class GazeTracker:
             mirror_text,
             calib_text,
             ml_text,
+            mapper_text,
             f"{gain_text} {alpha_text}",
             map_x_text,
             map_y_text,
@@ -798,6 +941,7 @@ class GazeTracker:
         self._gaze_smooth = None
         self._gaze_window.clear()
         self._last_gaze_time = None
+        self.reset_runtime_state()
         return self._calib_range is not None
 
     def has_full_calibration(self) -> bool:
@@ -935,6 +1079,7 @@ class GazeTracker:
                 self._gaze_smooth = None
                 self._gaze_window.clear()
                 self._last_gaze_time = None
+                self.reset_runtime_state()
                 ok = self._calib_range is not None
                 if ok:
                     self._load_ml_from_json(data, path)
@@ -966,6 +1111,7 @@ class GazeTracker:
             self._gaze_smooth = None
             self._gaze_window.clear()
             self._last_gaze_time = None
+            self.reset_runtime_state()
             self._load_ml_from_json(data, path)
             return True
 
@@ -985,35 +1131,65 @@ class GazeTracker:
         gx, gy = gaze_raw
         # Openness is kept for diagnostics only; it does not shift gaze.
         gx, gy = self.apply_axis_flip((gx, gy))
+        fallback_mapped = self._compute_fallback_mapped((gx, gy))
+        self._ml_last_mapper = "FALLBACK"
+        self._ml_last_divergence = None
+
+        if self._ml_mode == "off":
+            self._last_good_gaze = fallback_mapped
+            return fallback_mapped
 
         if self.is_ml_ready():
             features = self._build_ml_features((gx, gy), self._last_head_pose_for_ml)
             if features is not None:
                 pred = self.predict_ml_gaze(features)
                 if pred is not None:
-                    self._last_good_gaze = pred
-                    return pred
+                    delta = float(max(abs(pred[0] - fallback_mapped[0]), abs(pred[1] - fallback_mapped[1])))
+                    self._ml_last_divergence = delta
+                    if self._ml_mode == "on":
+                        self._ml_last_mapper = "ML"
+                        self._last_good_gaze = pred
+                        return pred
 
-        if self._calib_range is not None:
-            gx_min, gx_max, gy_min, gy_max = self._calib_range
-            if gx_max - gx_min > 1e-6 and gy_max - gy_min > 1e-6:
-                # Linear, reversible mapping for calibration.
-                gx01 = (gx - gx_min) / (gx_max - gx_min)
-                gy01 = (gy - gy_min) / (gy_max - gy_min)
-                mapped = self._post_map_adjust((gx01, gy01), (gx, gy))
-                self._last_good_gaze = mapped
-                return mapped
+                    if not self._ml_probation_failed and self._ml_probation_total < ML_PROBATION_FRAMES:
+                        self._ml_probation_total += 1
+                        if delta > ML_DIVERGENCE_HARD:
+                            self._ml_probation_bad += 1
+                    if not self._ml_probation_failed and self._ml_probation_total >= ML_PROBATION_FRAMES:
+                        bad_ratio = self._ml_probation_bad / max(1, self._ml_probation_total)
+                        if bad_ratio > ML_PROBATION_BAD_RATIO:
+                            self._ml_probation_failed = True
+                            self._ml_runtime_enabled = False
+                            self._note_ml_disabled("unstable vs fallback during probation")
 
-        center = self._calib_center if self._calib_center is not None else (0.5, 0.5)
-        gx01 = 0.5 + (gx - center[0]) * self.gain_x
-        gy01 = 0.5 + (gy - center[1]) * self.gain_y
-        gx01 = self._apply_deadzone(gx01)
-        gy01 = self._apply_deadzone(gy01)
-        gx01 = self._apply_gamma(gx01)
-        gy01 = self._apply_gamma(gy01)
-        mapped = self._post_map_adjust((self._clamp01(gx01), self._clamp01(gy01)), (gx, gy))
-        self._last_good_gaze = mapped
-        return mapped
+                    if delta > ML_DIVERGENCE_HARD:
+                        self._ml_bad_streak += 1
+                        self._ml_good_streak = 0
+                        if self._ml_bad_streak >= ML_BAD_STREAK_LIMIT:
+                            self._ml_runtime_enabled = False
+                            self._note_ml_disabled("diverged_vs_fallback")
+                    else:
+                        self._ml_bad_streak = 0
+                        if delta <= ML_DIVERGENCE_STABLE:
+                            self._ml_good_streak += 1
+                            if (
+                                not self._ml_probation_failed
+                                and not self._ml_runtime_enabled
+                                and self._ml_good_streak >= ML_GOOD_STREAK_RECOVER
+                            ):
+                                self._ml_runtime_enabled = True
+                                self._ml_disabled_reason = ""
+                                self._ml_last_logged_reason = ""
+                        else:
+                            self._ml_good_streak = 0
+
+                    if self._ml_runtime_enabled:
+                        self._ml_last_mapper = "ML"
+                        self._last_good_gaze = pred
+                        return pred
+
+        self._last_good_gaze = fallback_mapped
+        return fallback_mapped
 
     def reset_calibration(self) -> None:
         """Clear all calibration data."""
