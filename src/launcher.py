@@ -67,6 +67,30 @@ ROOT_DIR = Path(__file__).resolve().parent.parent
 MAIN_SCRIPT = ROOT_DIR / "src" / "main.py"
 
 
+def _is_usable_python(path: Path) -> bool:
+    try:
+        return path.exists() and path.is_file() and path.stat().st_size > 0
+    except OSError:
+        return False
+
+
+def _preferred_python() -> str:
+    current = Path(sys.executable)
+    if _is_usable_python(current):
+        return str(current)
+
+    candidates = [
+        ROOT_DIR / "venv" / "Scripts" / "pythonw.exe",
+        ROOT_DIR / "venv" / "Scripts" / "python.exe",
+        ROOT_DIR / ".venv" / "Scripts" / "pythonw.exe",
+        ROOT_DIR / ".venv" / "Scripts" / "python.exe",
+    ]
+    for candidate in candidates:
+        if _is_usable_python(candidate):
+            return str(candidate)
+    return sys.executable
+
+
 class LaunchCard(QFrame):
     def __init__(self, accent: str, title: str, subtitle: str, facts: list[str], button_text: str, callback) -> None:
         super().__init__()
@@ -74,8 +98,8 @@ class LaunchCard(QFrame):
         self.setProperty("accent", accent)
 
         layout = QVBoxLayout(self)
-        layout.setContentsMargins(22, 22, 22, 22)
-        layout.setSpacing(14)
+        layout.setContentsMargins(26, 26, 26, 26)
+        layout.setSpacing(18)
 
         accent_bar = QFrame()
         accent_bar.setObjectName("accentBar")
@@ -112,20 +136,21 @@ class IrisKeysLauncher(QWidget):
     def __init__(self) -> None:
         super().__init__()
         self.setWindowTitle(APP_TITLE)
-        self.setMinimumSize(1120, 720)
+        self.setMinimumSize(1340, 860)
+        self.setObjectName("launcherRoot")
         self._build_ui()
         self._refresh_launch_hint()
 
     def _build_ui(self) -> None:
         root = QVBoxLayout(self)
-        root.setContentsMargins(28, 24, 28, 24)
-        root.setSpacing(18)
+        root.setContentsMargins(34, 28, 34, 28)
+        root.setSpacing(22)
 
         hero = QFrame()
         hero.setObjectName("heroCard")
         hero_layout = QVBoxLayout(hero)
-        hero_layout.setContentsMargins(28, 26, 28, 26)
-        hero_layout.setSpacing(10)
+        hero_layout.setContentsMargins(34, 32, 34, 32)
+        hero_layout.setSpacing(14)
 
         badge_row = QHBoxLayout()
         badge_row.setSpacing(8)
@@ -137,7 +162,7 @@ class IrisKeysLauncher(QWidget):
 
         title = QLabel(APP_TITLE)
         title.setObjectName("heroTitle")
-        title.setFont(QFont("Segoe UI", 26, self._font_bold_weight()))
+        title.setFont(QFont("Segoe UI", 34, self._font_bold_weight()))
 
         subtitle = QLabel(
             "Calibrate once, then move directly into Demo or live OS control. "
@@ -151,13 +176,13 @@ class IrisKeysLauncher(QWidget):
         hero_layout.addWidget(subtitle)
 
         settings_row = QHBoxLayout()
-        settings_row.setSpacing(16)
+        settings_row.setSpacing(20)
 
         settings_card = QFrame()
         settings_card.setObjectName("settingsCard")
         settings_layout = QVBoxLayout(settings_card)
-        settings_layout.setContentsMargins(22, 20, 22, 20)
-        settings_layout.setSpacing(12)
+        settings_layout.setContentsMargins(28, 26, 28, 26)
+        settings_layout.setSpacing(15)
 
         settings_title = QLabel("Session Settings")
         settings_title.setObjectName("sectionTitle")
@@ -201,8 +226,8 @@ class IrisKeysLauncher(QWidget):
         safety_card = QFrame()
         safety_card.setObjectName("safetyCard")
         safety_layout = QVBoxLayout(safety_card)
-        safety_layout.setContentsMargins(22, 20, 22, 20)
-        safety_layout.setSpacing(10)
+        safety_layout.setContentsMargins(28, 26, 28, 26)
+        safety_layout.setSpacing(14)
 
         safety_title = QLabel("OS Mode Safety")
         safety_title.setObjectName("sectionTitle")
@@ -231,8 +256,8 @@ class IrisKeysLauncher(QWidget):
         settings_row.addWidget(safety_card, 2)
 
         cards_grid = QGridLayout()
-        cards_grid.setHorizontalSpacing(16)
-        cards_grid.setVerticalSpacing(16)
+        cards_grid.setHorizontalSpacing(20)
+        cards_grid.setVerticalSpacing(20)
 
         demo_card = LaunchCard(
             "cool",
@@ -272,11 +297,17 @@ class IrisKeysLauncher(QWidget):
 
         self.setStyleSheet(
             """
-            QWidget {
+            QWidget#launcherRoot {
                 background: #091018;
                 color: #edf4fb;
                 font-family: Segoe UI;
-                font-size: 14px;
+                font-size: 17px;
+            }
+            QLabel {
+                background: transparent;
+            }
+            QCheckBox, QRadioButton {
+                background: transparent;
             }
             QFrame#heroCard {
                 background: qlineargradient(x1:0, y1:0, x2:1, y2:1,
@@ -308,59 +339,62 @@ class IrisKeysLauncher(QWidget):
             }
             QLabel#heroSubtitle, QLabel#cardSubtitle, QLabel#footerText {
                 color: #bfd0df;
+                font-size: 18px;
             }
             QLabel#sectionTitle, QLabel#cardTitle {
                 color: #ffffff;
-                font-size: 18px;
+                font-size: 22px;
                 font-weight: 600;
             }
             QLabel#subSectionTitle {
                 color: #e6f0f8;
-                font-size: 15px;
+                font-size: 18px;
                 font-weight: 600;
                 padding-top: 6px;
             }
             QLabel#factLabel {
                 color: #c4d3e1;
                 padding-left: 2px;
+                font-size: 16px;
             }
             QLabel#launchHint {
                 color: #9fd0ff;
-                background: #0d1721;
-                border: 1px solid #203545;
-                border-radius: 12px;
-                padding: 10px 12px;
+                background: transparent;
+                border: none;
+                padding: 4px 2px;
+                font-size: 17px;
             }
             QLabel#warningText {
                 color: #ffd79a;
-                background: #2a2115;
-                border: 1px solid #58401f;
-                border-radius: 12px;
-                padding: 10px 12px;
+                background: transparent;
+                border: none;
+                padding: 4px 2px;
+                font-size: 17px;
             }
             QLabel#guideText {
                 color: #d8e4ef;
-                background: #101924;
-                border: 1px solid #1e3040;
-                border-radius: 12px;
-                padding: 10px 12px;
+                background: transparent;
+                border: none;
+                padding: 4px 2px;
+                font-size: 17px;
             }
             QLabel#pill {
                 color: #dceeff;
                 background: rgba(255, 255, 255, 0.08);
                 border: 1px solid rgba(180, 220, 255, 0.18);
                 border-radius: 12px;
-                padding: 4px 10px;
+                padding: 6px 12px;
+                font-size: 15px;
             }
             QPushButton#primaryButton {
                 background: qlineargradient(x1:0, y1:0, x2:1, y2:0,
                     stop:0 #1f74db, stop:1 #39a0ff);
                 border: none;
-                border-radius: 16px;
-                padding: 14px 18px;
+                border-radius: 18px;
+                padding: 18px 22px;
                 color: white;
                 font-weight: 600;
-                font-size: 15px;
+                font-size: 18px;
             }
             QPushButton#primaryButton:hover {
                 background: qlineargradient(x1:0, y1:0, x2:1, y2:0,
@@ -372,18 +406,20 @@ class IrisKeysLauncher(QWidget):
             QCheckBox {
                 spacing: 10px;
                 color: #edf4fb;
+                font-size: 17px;
             }
             QRadioButton {
                 spacing: 10px;
                 color: #edf4fb;
+                font-size: 17px;
             }
             QCheckBox::indicator {
-                width: 18px;
-                height: 18px;
+                width: 20px;
+                height: 20px;
             }
             QRadioButton::indicator {
-                width: 18px;
-                height: 18px;
+                width: 20px;
+                height: 20px;
             }
             QCheckBox::indicator:unchecked {
                 border: 1px solid #47637d;
@@ -435,7 +471,7 @@ class IrisKeysLauncher(QWidget):
         return "auto"
 
     def _build_backend_args(self, mode: str, auto_calibrate: bool = False) -> list[str]:
-        args = [sys.executable, str(MAIN_SCRIPT), "--mode", mode]
+        args = [_preferred_python(), str(MAIN_SCRIPT), "--mode", mode]
         args.extend(["--assist", "on" if self.assist_checkbox.isChecked() else "off"])
         args.extend(["--click", "dwell" if self.dwell_checkbox.isChecked() else "off"])
         args.extend(["--os-click", "on" if self.dwell_checkbox.isChecked() else "off"])

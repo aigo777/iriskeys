@@ -41,13 +41,22 @@ _enable_windows_dpi_awareness()
 try:
     from PyQt6.QtCore import Qt, QTimer, pyqtSignal
     from PyQt6.QtGui import QFont
-    from PyQt6.QtWidgets import QApplication, QHBoxLayout, QLabel, QMessageBox, QPushButton, QVBoxLayout, QWidget
+    from PyQt6.QtWidgets import (
+        QApplication,
+        QHBoxLayout,
+        QLabel,
+        QMessageBox,
+        QPushButton,
+        QTextEdit,
+        QVBoxLayout,
+        QWidget,
+    )
 
     QT_API = "PyQt6"
 except ImportError:
     from PyQt5.QtCore import Qt, QTimer, pyqtSignal
     from PyQt5.QtGui import QFont
-    from PyQt5.QtWidgets import QApplication, QHBoxLayout, QLabel, QMessageBox, QPushButton, QVBoxLayout, QWidget
+    from PyQt5.QtWidgets import QApplication, QHBoxLayout, QLabel, QMessageBox, QPushButton, QTextEdit, QVBoxLayout, QWidget
 
     QT_API = "PyQt5"
 
@@ -55,6 +64,112 @@ except ImportError:
 VOICE_PREPARE_DELAY_S = 4.0
 VOICE_LISTEN_TIMEOUT_S = 5
 VOICE_PHRASE_LIMIT_S = 8
+
+
+class TextPadWindow(QWidget):
+    def __init__(self) -> None:
+        super().__init__()
+        self.setWindowTitle("IrisKeys Text Pad")
+        self.setObjectName("textPadRoot")
+        flags = Qt.WindowType.Tool | Qt.WindowType.WindowStaysOnTopHint
+        if QT_API == "PyQt5":
+            flags = Qt.Tool | Qt.WindowStaysOnTopHint
+        self.setWindowFlags(flags)
+        self.resize(760, 440)
+
+        root = QVBoxLayout(self)
+        root.setContentsMargins(18, 18, 18, 18)
+        root.setSpacing(12)
+
+        title = QLabel("IrisKeys Text Pad")
+        title.setObjectName("padTitle")
+        title.setFont(QFont("Segoe UI", 16, QFont.Weight.Bold if QT_API == "PyQt6" else QFont.Bold))
+
+        hint = QLabel("Use the on-screen keyboard here or let voice input collect text into this window.")
+        hint.setObjectName("padHint")
+        hint.setWordWrap(True)
+
+        self.editor = QTextEdit()
+        self.editor.setObjectName("padEditor")
+        self.editor.setPlaceholderText("Voice and keyboard text will appear here...")
+
+        buttons = QHBoxLayout()
+        buttons.setSpacing(10)
+        self.copy_btn = QPushButton("Copy")
+        self.clear_btn = QPushButton("Clear")
+        self.focus_btn = QPushButton("Focus")
+        self.copy_btn.clicked.connect(self.copy_all)
+        self.clear_btn.clicked.connect(self.editor.clear)
+        self.focus_btn.clicked.connect(self.focus_editor)
+        buttons.addWidget(self.copy_btn)
+        buttons.addWidget(self.clear_btn)
+        buttons.addWidget(self.focus_btn)
+        buttons.addStretch(1)
+
+        root.addWidget(title)
+        root.addWidget(hint)
+        root.addWidget(self.editor, 1)
+        root.addLayout(buttons)
+
+        self.setStyleSheet(
+            """
+            QWidget#textPadRoot {
+                background: #111b26;
+                color: #edf4fb;
+                font-family: Segoe UI;
+                font-size: 15px;
+            }
+            QLabel {
+                background: transparent;
+            }
+            QLabel#padTitle {
+                color: #ffffff;
+            }
+            QLabel#padHint {
+                color: #c1d3e2;
+            }
+            QTextEdit#padEditor {
+                background: #0d1620;
+                border: 1px solid #294355;
+                border-radius: 16px;
+                padding: 12px;
+                color: #ffffff;
+                font-size: 18px;
+            }
+            QPushButton {
+                min-height: 52px;
+                min-width: 116px;
+                border: none;
+                border-radius: 14px;
+                color: #ffffff;
+                background: #1b4868;
+                font-size: 16px;
+                font-weight: 600;
+                padding: 10px 16px;
+            }
+            QPushButton:hover {
+                background: #27628a;
+            }
+            """
+        )
+
+    def append_text(self, text: str) -> None:
+        existing = self.editor.toPlainText().strip()
+        self.editor.setPlainText((existing + ("\n" if existing else "") + text).strip())
+        self.focus_editor()
+
+    def focus_editor(self) -> None:
+        self.show()
+        self.raise_()
+        self.activateWindow()
+        self.editor.setFocus()
+        cursor = self.editor.textCursor()
+        move_end = cursor.MoveOperation.End if QT_API == "PyQt6" else cursor.End
+        cursor.movePosition(move_end)
+        self.editor.setTextCursor(cursor)
+
+    def copy_all(self) -> None:
+        QApplication.clipboard().setText(self.editor.toPlainText())
 
 
 def parse_args() -> argparse.Namespace:
@@ -76,6 +191,8 @@ class FloatingToolbar(QWidget):
         self.switch_mode = "none"
         self.voice_state = "idle"
         self.voice_status_text = "Ready"
+        self.text_pad: TextPadWindow | None = None
+        self.voice_target_text_pad = False
         self.voice_prepare_deadline = 0.0
         self.voice_previous_paused_state = False
         self.voice_session_id = 0
@@ -97,13 +214,13 @@ class FloatingToolbar(QWidget):
         self.setObjectName("toolbarRoot")
 
         root = QHBoxLayout(self)
-        root.setContentsMargins(18, 16, 18, 16)
-        root.setSpacing(14)
+        root.setContentsMargins(20, 18, 20, 18)
+        root.setSpacing(16)
 
         title = QLabel("IrisKeys")
         title.setObjectName("titleLabel")
         title.setAlignment(Qt.AlignmentFlag.AlignCenter if QT_API == "PyQt6" else Qt.AlignCenter)
-        title.setFont(QFont("Segoe UI", 16, self._font_bold_weight()))
+        title.setFont(QFont("Segoe UI", 18, self._font_bold_weight()))
 
         subtitle = QLabel("OS toolbar")
         subtitle.setObjectName("subtitleLabel")
@@ -119,6 +236,7 @@ class FloatingToolbar(QWidget):
 
         self.keyboard_btn = self._make_button("Keyboard", self.open_keyboard)
         self.voice_btn = self._make_button("Voice Type", self.voice_type)
+        self.text_pad_btn = self._make_button("Text Pad", self.open_text_pad)
         self.demo_btn = self._make_button("Demo Mode", self.switch_to_demo_mode)
         self.right_click_btn = self._make_button("Right Click", self.toggle_right_click)
         self.pause_btn = self._make_button("Pause", self.toggle_pause)
@@ -131,6 +249,7 @@ class FloatingToolbar(QWidget):
         root.addWidget(title_wrap)
         root.addWidget(self.keyboard_btn)
         root.addWidget(self.voice_btn)
+        root.addWidget(self.text_pad_btn)
         root.addWidget(self.demo_btn)
         root.addWidget(self.right_click_btn)
         root.addWidget(self.pause_btn)
@@ -143,33 +262,36 @@ class FloatingToolbar(QWidget):
                 border: 1px solid #314659;
                 border-radius: 24px;
             }
+            QLabel {
+                background: transparent;
+            }
             QLabel#titleLabel {
                 color: #ffffff;
                 padding: 2px 10px 0 4px;
             }
             QLabel#subtitleLabel {
                 color: #8fb8d8;
-                font-size: 12px;
+                font-size: 13px;
                 padding: 0 10px 0 4px;
             }
             QLabel#stateLabel {
                 color: #c8dceb;
-                background: #0d141d;
+                background: #13212e;
                 border: 1px solid #223646;
                 border-radius: 16px;
                 padding: 14px;
-                font-size: 14px;
+                font-size: 16px;
             }
             QPushButton {
-                min-width: 124px;
-                min-height: 124px;
+                min-width: 148px;
+                min-height: 148px;
                 border: none;
-                border-radius: 22px;
+                border-radius: 24px;
                 color: #ffffff;
                 background: #183249;
-                font-size: 17px;
+                font-size: 19px;
                 font-weight: 600;
-                padding: 12px;
+                padding: 14px;
             }
             QPushButton:hover {
                 background: #245071;
@@ -205,9 +327,9 @@ class FloatingToolbar(QWidget):
         top_margin = vy + max(18, int(height_px * 0.025))
         side_margin = max(18, int(width_px * 0.018))
         if self.dock == "top":
-            available_width = max(720, width_px - side_margin * 2)
-            width = min(max(1040, int(width_px * 0.72)), available_width)
-            height = 168
+            available_width = max(980, width_px - side_margin * 2)
+            width = min(max(1380, int(width_px * 0.84)), available_width)
+            height = 194
             x = vx + max(side_margin, int((width_px - width) / 2))
             y = top_margin
         else:
@@ -253,6 +375,7 @@ class FloatingToolbar(QWidget):
         self.demo_btn.setProperty("state", "arming" if self.switch_mode == "demo" else "")
         self.demo_btn.setText("Opening Demo..." if self.switch_mode == "demo" else "Demo Mode")
         self.voice_btn.setProperty("state", "arming" if self.voice_state == "prepare" else "")
+        self.text_pad_btn.setProperty("state", "armed" if self.text_pad is not None and self.text_pad.isVisible() else "")
         self.demo_btn.setEnabled(self.switch_mode != "demo")
         self.voice_btn.setEnabled(self.voice_state != "listening")
         if self.voice_state == "idle":
@@ -266,6 +389,7 @@ class FloatingToolbar(QWidget):
         self._polish_button(self.pause_btn)
         self._polish_button(self.demo_btn)
         self._polish_button(self.voice_btn)
+        self._polish_button(self.text_pad_btn)
 
     @staticmethod
     def _polish_button(button: QPushButton) -> None:
@@ -276,9 +400,21 @@ class FloatingToolbar(QWidget):
 
     def open_keyboard(self) -> None:
         try:
+            self.open_text_pad()
             os.system("osk")
         except Exception as exc:
             self._show_error(f"Failed to open On-Screen Keyboard.\n\n{exc}")
+
+    def open_text_pad(self) -> None:
+        if self.text_pad is None:
+            self.text_pad = TextPadWindow()
+            vx, vy, width_px, _ = _get_windows_desktop_rect()
+            pad_width = self.text_pad.width()
+            x = vx + max(24, int((width_px - pad_width) / 2))
+            y = vy + 230
+            self.text_pad.move(int(x), int(y))
+        self.text_pad.focus_editor()
+        self._refresh_labels()
 
     def voice_type(self) -> None:
         if self.voice_state == "prepare":
@@ -286,6 +422,10 @@ class FloatingToolbar(QWidget):
             return
         if self.voice_state != "idle":
             return
+
+        self.voice_target_text_pad = bool(self.text_pad is not None and self.text_pad.isVisible())
+        if self.voice_target_text_pad:
+            self.open_text_pad()
 
         self.voice_state = "prepare"
         self.voice_status_text = f"Ready in {int(VOICE_PREPARE_DELAY_S)}s"
@@ -309,6 +449,7 @@ class FloatingToolbar(QWidget):
         self.voice_prepare_timer.stop()
         self.voice_state = "idle"
         self.voice_status_text = "Ready"
+        self.voice_target_text_pad = False
         self.voice_prepare_deadline = 0.0
         self._refresh_labels()
 
@@ -326,6 +467,7 @@ class FloatingToolbar(QWidget):
 
         def worker() -> None:
             error_message = None
+            recognized_text = ""
             try:
                 import pyautogui
                 import speech_recognition as sr
@@ -353,32 +495,42 @@ class FloatingToolbar(QWidget):
                         last_error = exc
                 if not text:
                     raise RuntimeError(str(last_error) if last_error is not None else "Speech was not recognized.")
-
-                win32clipboard.OpenClipboard()
-                try:
-                    win32clipboard.EmptyClipboard()
-                    win32clipboard.SetClipboardText(text, win32con.CF_UNICODETEXT)
-                finally:
-                    win32clipboard.CloseClipboard()
-                pyautogui.hotkey("ctrl", "v")
+                recognized_text = text
+                if self.voice_target_text_pad:
+                    pass
+                else:
+                    win32clipboard.OpenClipboard()
+                    try:
+                        win32clipboard.EmptyClipboard()
+                        win32clipboard.SetClipboardText(text, win32con.CF_UNICODETEXT)
+                    finally:
+                        win32clipboard.CloseClipboard()
+                    pyautogui.hotkey("ctrl", "v")
             except Exception as exc:  # pragma: no cover - depends on runtime devices
                 error_message = str(exc)
-            self.voice_finished.emit(current_session, "" if error_message is None else error_message)
+            self.voice_finished.emit(current_session, recognized_text if error_message is None else f"ERROR::{error_message}")
 
         threading.Thread(target=worker, daemon=True).start()
 
-    def _finish_voice_type(self, session_id: int, error_message: str) -> None:
+    def _finish_voice_type(self, session_id: int, payload: str) -> None:
         if session_id != self.voice_session_id or self.voice_state != "listening":
             return
         self.tracking_paused = bool(self.voice_previous_paused_state)
         self.voice_state = "idle"
         self.voice_status_text = "Ready"
         self._sync_state()
-        if error_message:
+        if payload.startswith("ERROR::"):
+            self.voice_target_text_pad = False
             self._show_error(
                 "Voice typing failed.\n\nMake sure microphone access, speech_recognition, and pyautogui are available.\n\n"
-                + error_message
+                + payload.removeprefix("ERROR::")
             )
+            return
+        if payload and self.voice_target_text_pad:
+            self.open_text_pad()
+            if self.text_pad is not None:
+                self.text_pad.append_text(payload)
+        self.voice_target_text_pad = False
 
     def toggle_right_click(self) -> None:
         self.next_click_button = "left" if self.next_click_button == "right" else "right"
