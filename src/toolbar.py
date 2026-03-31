@@ -63,7 +63,7 @@ except ImportError:
 
 VOICE_PREPARE_DELAY_S = 4.0
 VOICE_LISTEN_TIMEOUT_S = 5
-VOICE_PHRASE_LIMIT_S = 8
+VOICE_PHRASE_LIMIT_S = 12
 
 
 class TextPadWindow(QWidget):
@@ -475,10 +475,10 @@ class FloatingToolbar(QWidget):
                 import win32con
 
                 recognizer = sr.Recognizer()
-                recognizer.pause_threshold = 0.55
-                recognizer.non_speaking_duration = 0.35
+                recognizer.pause_threshold = 0.95
+                recognizer.non_speaking_duration = 0.6
                 with sr.Microphone() as source:
-                    recognizer.adjust_for_ambient_noise(source, duration=0.6)
+                    recognizer.adjust_for_ambient_noise(source, duration=1.0)
                     audio = recognizer.listen(
                         source,
                         timeout=VOICE_LISTEN_TIMEOUT_S,
@@ -486,7 +486,7 @@ class FloatingToolbar(QWidget):
                     )
                 text = ""
                 last_error: Exception | None = None
-                for language in ("ru-RU", "ru-KZ", "en-US"):
+                for language in ("kk-KZ", "ru-RU", "en-US"):
                     try:
                         text = recognizer.recognize_google(audio, language=language).strip()
                         if text:
